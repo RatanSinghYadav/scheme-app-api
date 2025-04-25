@@ -14,7 +14,7 @@ exports.getSchemes = async (req, res) => {
     // Copy req.query
     const reqQuery = { ...req.query };
 
-    // Fields to exclude
+    // Fields to exclude 
     const removeFields = ['select', 'sort'];
 
     // Loop over removeFields and delete them from reqQuery
