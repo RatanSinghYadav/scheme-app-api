@@ -67,7 +67,7 @@ exports.getSchemes = async (req, res) => {
 // @access  Private
 exports.getScheme = async (req, res) => {
   try {
-   
+
     const scheme = await Scheme.findOne({ schemeCode: req.params.id })
       .populate('distributors', 'SMCODE CUSTOMERACCOUNT ORGANIZATIONNAME ADDRESSCITY CUSTOMERGROUPID')
       .populate('createdBy', 'name email role')
@@ -101,17 +101,27 @@ exports.createScheme = async (req, res) => {
   try {
     // Add user to req.body
     req.body.createdBy = req.user.id;
-    
+
     // Generate a unique scheme code if not provided
     if (!req.body.schemeCode) {
       req.body.schemeCode = generateSchemeCode();
     }
+
+    // Ensure dates are stored correctly by creating new Date objects
+    // and adding one day to compensate for timezone issues
+    let startDate = new Date(req.body.startDate);
+    startDate.setDate(startDate.getDate() + 1); // Add one day to fix timezone issue
+    startDate.setUTCHours(0, 0, 0, 0);
     
+    let endDate = new Date(req.body.endDate);
+    endDate.setDate(endDate.getDate() + 1); // Add one day to fix timezone issue
+    endDate.setUTCHours(0, 0, 0, 0);
+
     // Format the data from frontend to match the Scheme model
     const schemeData = {
       schemeCode: req.body.schemeCode,
-      startDate: req.body.startDate,
-      endDate: req.body.endDate,
+      startDate: startDate,
+      endDate: endDate,
       distributors: req.body.distributors || [], // Array of distributor IDs
       products: req.body.products.map(product => ({
         ITEMID: product.itemCode || product.ITEMID,
@@ -190,7 +200,7 @@ exports.updateScheme = async (req, res) => {
     if (!req.body.history) {
       req.body.history = scheme.history;
     }
-    
+
     req.body.history.push({
       action: 'modified',
       user: req.user.id,
@@ -231,7 +241,7 @@ exports.verifyScheme = async (req, res) => {
     // Update status and verifier
     scheme.status = 'Verified';
     scheme.verifiedBy = req.user.id;
-    
+
     // Add history entry
     scheme.history.push({
       action: 'verified',
@@ -269,7 +279,7 @@ exports.rejectScheme = async (req, res) => {
 
     // Update status
     scheme.status = 'Rejected';
-    
+
     // Add history entry
     scheme.history.push({
       action: 'rejected',
@@ -296,7 +306,7 @@ exports.rejectScheme = async (req, res) => {
 // @access  Private (admin)
 exports.deleteScheme = async (req, res) => {
   try {
-    const scheme = await Scheme.findById(req.params.id);
+    const scheme = await Scheme.findOne({ schemeCode: req.params.id });
 
     if (!scheme) {
       return res.status(404).json({
@@ -375,7 +385,7 @@ exports.exportScheme = async (req, res) => {
 
       // Add data rows - for each distributor, add all products
       let rowData = [];
-      
+
       // For each distributor, create entries for all products
       scheme.distributors.forEach(distributor => {
         scheme.products.forEach(product => {
@@ -411,7 +421,7 @@ exports.exportScheme = async (req, res) => {
       // Set response headers
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', `attachment; filename=Scheme_${scheme.schemeCode}.xlsx`);
-      
+
       // Send the buffer
       res.send(buffer);
     } else if (format === 'pdf') {
@@ -432,6 +442,151 @@ exports.exportScheme = async (req, res) => {
     res.status(400).json({
       success: false,
       error: err.message
+    });
+  }
+};
+
+// @desc    Export schemes by date range
+// @route   GET /api/schemes/exportByDate
+// @access  Private
+exports.exportSchemesByDate = async (req, res) => {
+  try {
+    // Get start and end date from query params
+    const { startDate, endDate, format = 'excel' } = req.query;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please provide start and end date'
+      });
+    }
+
+    // Convert string dates to Date objects
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    // Add one day to end date to include the end date in the range
+    end.setDate(end.getDate() + 1);
+
+    // Find schemes within the date range
+    const schemes = await Scheme.find({
+      startDate: { $gte: start },
+      endDate: { $lte: end }
+    })
+      .populate('distributors', 'SMCODE CUSTOMERACCOUNT ORGANIZATIONNAME ADDRESSCITY CUSTOMERGROUPID')
+      .populate('createdBy', 'name email role')
+      .populate('verifiedBy', 'name email role');
+
+    if (schemes.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No schemes found for the given date range'
+      });
+    }
+
+    if (format === 'excel') {
+      // Create a new Excel workbook
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Scheme Data');
+
+      // Define fixed columns (yellow in the reference)
+      const fixedColumns = [
+        { header: 'schemeCode', key: 'schemeCode', width: 15 },
+        { header: 'startingDate', key: 'startingDate', width: 15 },
+        { header: 'endingDate', key: 'endingDate', width: 15 },
+        { header: 'salesType', key: 'salesType', width: 10 },
+        { header: 'salesCode', key: 'salesCode', width: 15 },
+        { header: 'salesDescription', key: 'salesDescription', width: 20 },
+        { header: 'type', key: 'type', width: 10 },
+        { header: 'code', key: 'code', width: 15 },
+        { header: 'itemName', key: 'itemName', width: 30 },
+        { header: 'itemCombinationGroup', key: 'itemCombinationGroup', width: 20 },
+        { header: 'configId', key: 'configId', width: 15 },
+        { header: 'size', key: 'size', width: 10 },
+        { header: 'color', key: 'color', width: 10 },
+        { header: 'style', key: 'style', width: 10 },
+        { header: 'taxChargeCode', key: 'taxChargeCode', width: 15 },
+        { header: 'minimumQuantity', key: 'minimumQuantity', width: 15 },
+        { header: 'lineDiscount', key: 'lineDiscount', width: 15 },
+        { header: 'company', key: 'company', width: 15 }
+      ];
+
+      // Set columns in worksheet
+      worksheet.columns = fixedColumns;
+
+      // Style for headers (yellow background)
+      worksheet.getRow(1).eachCell((cell) => {
+        cell.font = { bold: true };
+      });
+
+      // Add data rows - for all schemes, for each distributor, add all products
+      let rowData = [];
+
+      // For each scheme, for each distributor, create entries for all products
+      schemes.forEach(scheme => {
+        // exportScheme function में परिवर्तन
+        scheme.distributors.forEach(distributor => {
+          scheme.products.forEach(product => {
+            // Create date objects and ensure we're using UTC dates
+            const startDate = new Date(scheme.startDate);
+            const endDate = new Date(scheme.endDate);
+            
+            rowData.push({
+              schemeCode: 'SCHM000009' || '',
+              startingDate: `${startDate.getUTCDate().toString().padStart(2, '0')}-${(startDate.getUTCMonth() + 1).toString().padStart(2, '0')}-${startDate.getUTCFullYear()}`,
+              endingDate: `${endDate.getUTCDate().toString().padStart(2, '0')}-${(endDate.getUTCMonth() + 1).toString().padStart(2, '0')}-${endDate.getUTCFullYear()}`,
+              salesType: 0, // Fixed value
+              salesCode: distributor.CUSTOMERACCOUNT,
+              salesDescription: '',
+              type: 0, // Fixed value
+              code: product.ITEMID,
+              itemName: product.ITEMNAME,
+              itemCombinationGroup: '', // Empty or can be populated if available
+              configId: product.Configuration, // Empty or can be populated if available
+              size: '',
+              color: '', // Empty or can be populated if available
+              style: product.Style,
+              taxChargeCode: 'DIS_PRI_VL', // Fixed value
+              minimumQuantity: '',
+              lineDiscount: product.discountPrice || 0,
+              company: 'brly' // Fixed value
+            });
+          });
+        });
+        
+        // exportSchemesByDate function में भी इसी तरह का परिवर्तन करें
+      });
+
+      // Add all rows to worksheet
+      worksheet.addRows(rowData);
+
+      // Write to buffer
+      const buffer = await workbook.xlsx.writeBuffer();
+
+      // Set response headers
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename=Schemes_${startDate}_to_${endDate}.xlsx`);
+
+      // Send the buffer
+      res.send(buffer);
+    } else if (format === 'pdf') {
+      // For PDF format, you would need to implement PDF generation
+      // This is a placeholder - you would need to add a PDF library
+      res.status(501).json({
+        success: false,
+        error: 'PDF export not yet implemented'
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid export format'
+      });
+    }
+  } catch (err) {
+    console.error('Error exporting schemes by date:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Server Error'
     });
   }
 };
