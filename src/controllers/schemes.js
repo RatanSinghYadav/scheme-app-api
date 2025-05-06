@@ -464,8 +464,6 @@ exports.exportSchemesByDate = async (req, res) => {
     }
 
     // Convert string dates to Date objects
-    const start = new Date(startDate);
-    const end = new Date(endDate);
 
     // Add one day to end date to include the end date in the range
     // end.setDate(end.getDate() + 1);
