@@ -453,6 +453,8 @@ exports.exportSchemesByDate = async (req, res) => {
   try {
     // Get start and end date from query params
     const { startDate, endDate, format = 'excel' } = req.query;
+    console.log("startDate:", startDate);
+    console.log("endDate:",endDate);
 
     if (!startDate || !endDate) {
       return res.status(400).json({
@@ -466,7 +468,7 @@ exports.exportSchemesByDate = async (req, res) => {
     const end = new Date(endDate);
 
     // Add one day to end date to include the end date in the range
-    end.setDate(end.getDate() + 1);
+    // end.setDate(end.getDate() + 1);
 
     // Find schemes within the date range
     const schemes = await Scheme.find({
