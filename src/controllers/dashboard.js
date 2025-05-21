@@ -1,3 +1,4 @@
+const BaseScheme = require('../models/BaseScheme');
 const Scheme = require('../models/Scheme');
 const User = require('../models/User');
 
@@ -8,12 +9,15 @@ exports.getDashboardStats = async (req, res) => {
   try {
     // Get total schemes count
     const total = await Scheme.countDocuments();
+    const baseTotal = await BaseScheme.countDocuments();
     
     // Get verified schemes count
     const verified = await Scheme.countDocuments({ status: 'Verified' });
+    const baseVerified = await BaseScheme.countDocuments({ status: 'Verified' });
     
     // Get pending verification schemes count
     const pending = await Scheme.countDocuments({ status: 'Pending Verification' });
+    const basePending = await BaseScheme.countDocuments({ status: 'Pending Verification' });
     
     // Get active schemes today (schemes that are active and have today's date between start and end date)
     const today = new Date();
@@ -29,6 +33,9 @@ exports.getDashboardStats = async (req, res) => {
       success: true,
       data: {
         total,
+        baseTotal,
+        basePending,
+        baseVerified,
         verified,
         pending,
         activeToday
