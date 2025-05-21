@@ -46,8 +46,6 @@ exports.getSchemes = async (req, res) => {
             return scheme;
         }));
 
-        console.log('Populated Schemes:', populatedSchemes); // Log the populated schemes for verificatio
-
         res.status(200).json({
             success: true,
             count: populatedSchemes.length,
@@ -130,8 +128,6 @@ exports.createScheme = async (req, res) => {
         endDate.setDate(endDate.getDate() + 1); // Add one day to fix timezone issue
         endDate.setUTCHours(0, 0, 0, 0);
 
-        console.log(req.body.distributors);
-
         // Format the data from frontend to match the Scheme model
         const schemeData = {
             schemeCode: req.body.schemeCode,
@@ -163,8 +159,6 @@ exports.createScheme = async (req, res) => {
                 }
             ]
         };
-
-        console.log('Scheme Data:', schemeData); // Log the scheme data for verificatio
 
         const scheme = await BaseScheme.create(schemeData);
 
@@ -526,6 +520,7 @@ exports.exportScheme = async (req, res) => {
     try {
         // First find the scheme to check its distributorType
         const schemeCheck = await BaseScheme.findOne({ schemeCode: req.params.id });
+        console.log(schemeCheck); // Log the schemeCheck t
 
         if (!schemeCheck) {
             return res.status(404).json({
@@ -542,21 +537,14 @@ exports.exportScheme = async (req, res) => {
                 .populate('distributors', 'SMCODE CUSTOMERACCOUNT ORGANIZATIONNAME ADDRESSCITY CUSTOMERGROUPID');
         } else {
             // If group, don't populate distributor details
-            scheme = await BaseScheme.findOne({ schemeCode: req.params.id });
-        }
-
-        if (!scheme) {
-            return res.status(404).json({
-                success: false,
-                error: 'Scheme not found'
-            });
+            scheme = scheme = await BaseScheme.findOne({ schemeCode: req.params.id });
         }
 
         // Create a new Excel workbook
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet('Scheme Data');
 
-        // Define fixed columns (yellow in the reference)
+        // Define fixed columns
         const fixedColumns = [
             { header: 'schemeCode', key: 'schemeCode', width: 15 },
             { header: 'startingDate', key: 'startingDate', width: 15 },
@@ -581,43 +569,71 @@ exports.exportScheme = async (req, res) => {
         // Set columns in worksheet
         worksheet.columns = fixedColumns;
 
-        // Style for headers (yellow background)
+        // Style for headers
         worksheet.getRow(1).eachCell((cell) => {
             cell.font = { bold: true };
         });
 
-        // Add data rows - for all distributors, add all products
+        // Add data rows
         let rowData = [];
 
-        // For each distributor, create entries for all products
-        scheme.distributors.forEach(distributor => {
-            scheme.products.forEach(product => {
-                // Create date objects and ensure we're using UTC dates
-                const startDate = new Date(scheme.startDate);
-                const endDate = new Date(scheme.endDate);
+        // Create date objects and ensure we're using UTC dates
+        const startDate = new Date(scheme.startDate);
+        const endDate = new Date(scheme.endDate);
 
-                rowData.push({
-                    schemeCode: scheme.schemeCode || '',
-                    startingDate: `${startDate.getUTCDate().toString().padStart(2, '0')}-${(startDate.getUTCMonth() + 1).toString().padStart(2, '0')}-${startDate.getUTCFullYear()}`,
-                    endingDate: `${endDate.getUTCDate().toString().padStart(2, '0')}-${(endDate.getUTCMonth() + 1).toString().padStart(2, '0')}-${endDate.getUTCFullYear()}`,
-                    salesType: 0, // Fixed value
-                    salesCode: distributor.CUSTOMERACCOUNT || distributor.CUSTOMERGROUPID,
-                    salesDescription: '',
-                    type: 0, // Fixed value
-                    code: product.ITEMID,
-                    itemName: product.ITEMNAME,
-                    itemCombinationGroup: '', // Empty or can be populated if available
-                    configId: product.Configuration, // Empty or can be populated if available
-                    size: '',
-                    color: '', // Empty or can be populated if available
-                    style: product.Style,
-                    taxChargeCode: 'DIS_PRI_VL', // Fixed value
-                    minimumQuantity: '',
-                    lineDiscount: product.discountPrice || 0,
-                    company: 'brly' // Fixed value
+        // For individual distributors
+        if (scheme.distributorType === 'individual') {
+            scheme.distributors.forEach(distributor => {
+                scheme.products.forEach(product => {
+                    rowData.push({
+                        schemeCode: 'SCHM000009' || '',
+                        startingDate: `${startDate.getUTCDate().toString().padStart(2, '0')}-${(startDate.getUTCMonth() + 1).toString().padStart(2, '0')}-${startDate.getUTCFullYear()}`,
+                        endingDate: `${endDate.getUTCDate().toString().padStart(2, '0')}-${(endDate.getUTCMonth() + 1).toString().padStart(2, '0')}-${endDate.getUTCFullYear()}`,
+                        salesType: 0, // Fixed value
+                        salesCode: distributor.CUSTOMERACCOUNT || distributor.CUSTOMERGROUPID,
+                        salesDescription: distributor.ORGANIZATIONNAME || '',
+                        type: 0, // Fixed value
+                        code: product.ITEMID,
+                        itemName: product.ITEMNAME,
+                        itemCombinationGroup: '', // Empty or can be populated if available
+                        configId: product.Configuration, // Empty or can be populated if available
+                        size: '',
+                        color: '', // Empty or can be populated if available
+                        style: product.Style,
+                        taxChargeCode: 'DIS_PRI_VL', // Fixed value
+                        minimumQuantity: '',
+                        lineDiscount: product.discountPrice || 0,
+                        company: 'brly' // Fixed value
+                    });
                 });
             });
-        });
+        } else {
+            // For group distributors
+            scheme.distributors.forEach(groupCode => {
+                scheme.products.forEach(product => {
+                    rowData.push({
+                        schemeCode: scheme.schemeCode || '',
+                        startingDate: `${startDate.getUTCDate().toString().padStart(2, '0')}-${(startDate.getUTCMonth() + 1).toString().padStart(2, '0')}-${startDate.getUTCFullYear()}`,
+                        endingDate: `${endDate.getUTCDate().toString().padStart(2, '0')}-${(endDate.getUTCMonth() + 1).toString().padStart(2, '0')}-${endDate.getUTCFullYear()}`,
+                        salesType: 0, // Fixed value
+                        salesCode: typeof groupCode === 'string' ? groupCode : groupCode.CUSTOMERGROUPID || groupCode,
+                        salesDescription: '',
+                        type: 0, // Fixed value
+                        code: product.ITEMID,
+                        itemName: product.ITEMNAME,
+                        itemCombinationGroup: '', // Empty or can be populated if available
+                        configId: product.Configuration, // Empty or can be populated if available
+                        size: '',
+                        color: '', // Empty or can be populated if available
+                        style: product.Style,
+                        taxChargeCode: 'DIS_PRI_VL', // Fixed value
+                        minimumQuantity: '',
+                        lineDiscount: product.discountPrice || 0,
+                        company: 'brly' // Fixed value
+                    });
+                });
+            });
+        }
 
         // Add all rows to worksheet
         worksheet.addRows(rowData);
@@ -627,7 +643,7 @@ exports.exportScheme = async (req, res) => {
 
         // Set response headers
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition', `attachment; filename=Scheme_${scheme.schemeCode}.xlsx`);
+        res.setHeader('Content-Disposition', `attachment; filename=${scheme.schemeCode}.xlsx`);
 
         // Send the buffer
         res.send(buffer);
