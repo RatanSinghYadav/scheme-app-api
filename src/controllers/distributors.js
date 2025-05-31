@@ -156,3 +156,104 @@ exports.deleteDistributor = async (req, res) => {
     });
   }
 };
+
+// @desc    Bulk update distributors
+// @route   PUT /api/distributors/bulk-update
+// @access  Private (admin)
+exports.bulkUpdateDistributors = async (req, res) => {
+  try {
+    if (!Array.isArray(req.body)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Request body must be an array of distributors'
+      });
+    }
+
+    const updatePromises = req.body.map(async (distributor) => {
+      if (!distributor._id) {
+        return { success: false, error: 'Distributor ID is required', distributor };
+      }
+      
+      const updatedDistributor = await Distributor.findByIdAndUpdate(
+        distributor._id,
+        distributor,
+        { new: true, runValidators: true }
+      );
+      
+      if (!updatedDistributor) {
+        return { success: false, error: 'Distributor not found', distributor };
+      }
+      
+      return { success: true, data: updatedDistributor };
+    });
+
+    const results = await Promise.all(updatePromises);
+    
+    const allSuccessful = results.every(result => result.success);
+    
+    if (allSuccessful) {
+      res.status(200).json({
+        success: true,
+        count: results.length,
+        data: results.map(result => result.data)
+      });
+    } else {
+      res.status(207).json({
+        success: false,
+        results
+      });
+    }
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err.message
+    });
+  }
+};
+
+// @desc    Bulk delete distributors
+// @route   DELETE /api/distributors/bulk-delete
+// @access  Private (admin)
+exports.bulkDeleteDistributors = async (req, res) => {
+  try {
+    if (!Array.isArray(req.body.ids)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Request body must contain an array of distributor IDs'
+      });
+    }
+
+    const deletePromises = req.body.ids.map(async (id) => {
+      const distributor = await Distributor.findById(id);
+      
+      if (!distributor) {
+        return { success: false, error: 'Distributor not found', id };
+      }
+      
+      await distributor.remove();
+      return { success: true, id };
+    });
+
+    const results = await Promise.all(deletePromises);
+    
+    const allSuccessful = results.every(result => result.success);
+    
+    if (allSuccessful) {
+      res.status(200).json({
+        success: true,
+        count: results.length,
+        data: results
+      });
+    } else {
+      res.status(207).json({
+        success: false,
+        results
+      });
+    }
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err.message
+    });
+  }
+};

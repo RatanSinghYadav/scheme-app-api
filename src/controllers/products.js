@@ -224,3 +224,257 @@ exports.bulkImportProducts = async (req, res) => {
     });
   }
 };
+
+// @desc    Bulk update products
+// @route   PUT /api/products/bulk-update
+// @access  Private (admin)
+exports.bulkUpdateProducts = async (req, res) => {
+  try {
+    if (!Array.isArray(req.body)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Request body must be an array of products'
+      });
+    }
+
+    const updatePromises = req.body.map(async (product) => {
+      if (!product._id) {
+        return { success: false, error: 'Product ID is required', product };
+      }
+      
+      const updatedProduct = await Product.findByIdAndUpdate(
+        product._id,
+        product,
+        { new: true, runValidators: true }
+      );
+      
+      if (!updatedProduct) {
+        return { success: false, error: 'Product not found', product };
+      }
+      
+      return { success: true, data: updatedProduct };
+    });
+
+    const results = await Promise.all(updatePromises);
+    
+    const allSuccessful = results.every(result => result.success);
+    
+    if (allSuccessful) {
+      res.status(200).json({
+        success: true,
+        count: results.length,
+        data: results.map(result => result.data)
+      });
+    } else {
+      res.status(207).json({
+        success: false,
+        results
+      });
+    }
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err.message
+    });
+  }
+};
+
+// @desc    Bulk delete products
+// @route   DELETE /api/products/bulk-delete
+// @access  Private (admin)
+exports.bulkDeleteProducts = async (req, res) => {
+  try {
+    if (!Array.isArray(req.body.ids)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Request body must contain an array of product IDs'
+      });
+    }
+
+    const deletePromises = req.body.ids.map(async (id) => {
+      const product = await Product.findById(id);
+      
+      if (!product) {
+        return { success: false, error: 'Product not found', id };
+      }
+      
+      await product.remove();
+      return { success: true, id };
+    });
+
+    const results = await Promise.all(deletePromises);
+    
+    const allSuccessful = results.every(result => result.success);
+    
+    if (allSuccessful) {
+      res.status(200).json({
+        success: true,
+        count: results.length,
+        data: results
+      });
+    } else {
+      res.status(207).json({
+        success: false,
+        results
+      });
+    }
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err.message
+    });
+  }
+};
+
+// @desc    Find duplicate products
+// @route   GET /api/products/find-duplicates
+// @access  Private
+exports.findDuplicateProducts = async (req, res) => {
+  try {
+    const { criteria } = req.query;
+    let duplicates = [];
+
+    switch (criteria) {
+      case 'itemid':
+        // Find products with same ITEMID
+        duplicates = await Product.aggregate([
+          {
+            $group: {
+              _id: "$ITEMID",
+              count: { $sum: 1 },
+              products: { $push: "$$ROOT" }
+            }
+          },
+          { $match: { count: { $gt: 1 } } },
+          { $sort: { count: -1 } }
+        ]);
+        break;
+
+      case 'itemid_style':
+        // Find products with same ITEMID and Style
+        duplicates = await Product.aggregate([
+          {
+            $group: {
+              _id: { itemId: "$ITEMID", style: "$Style" },
+              count: { $sum: 1 },
+              products: { $push: "$$ROOT" }
+            }
+          },
+          { $match: { count: { $gt: 1 } } },
+          { $sort: { count: -1 } }
+        ]);
+        break;
+
+      case 'itemname':
+        // Find products with same ITEMNAME
+        duplicates = await Product.aggregate([
+          {
+            $group: {
+              _id: "$ITEMNAME",
+              count: { $sum: 1 },
+              products: { $push: "$$ROOT" }
+            }
+          },
+          { $match: { count: { $gt: 1 } } },
+          { $sort: { count: -1 } }
+        ]);
+        break;
+        
+      case 'itemid_style_config':
+        // Find products with same ITEMID, Style and Configuration
+        duplicates = await Product.aggregate([
+          {
+            $group: {
+              _id: { itemId: "$ITEMID", style: "$Style", config: "$Configuration" },
+              count: { $sum: 1 },
+              products: { $push: "$$ROOT" }
+            }
+          },
+          { $match: { count: { $gt: 1 } } },
+          { $sort: { count: -1 } }
+        ]);
+        break;
+
+      default:
+        // Default to ITEMID
+        duplicates = await Product.aggregate([
+          {
+            $group: {
+              _id: "$ITEMID",
+              count: { $sum: 1 },
+              products: { $push: "$$ROOT" }
+            }
+          },
+          { $match: { count: { $gt: 1 } } },
+          { $sort: { count: -1 } }
+        ]);
+    }
+
+    // Calculate total duplicate count
+    const totalDuplicates = duplicates.reduce((sum, group) => sum + group.count, 0);
+    const uniqueGroupsCount = duplicates.length;
+
+    res.status(200).json({
+      success: true,
+      totalDuplicates,
+      uniqueGroupsCount,
+      data: duplicates
+    });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err.message
+    });
+  }
+};
+
+// @desc    Delete duplicate products
+// @route   DELETE /api/products/delete-duplicates
+// @access  Private (admin)
+exports.deleteDuplicateProducts = async (req, res) => {
+  try {
+    const { ids, keepId } = req.body;
+    console.log(req.body);
+    
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Product IDs array is required'
+      });
+    }
+
+    if (!keepId) {
+      return res.status(400).json({
+        success: false,
+        error: 'ID of product to keep is required'
+      });
+    }
+
+    // Filter out the ID to keep from the deletion list
+    const idsToDelete = ids.filter(id => id !== keepId);
+
+    if (idsToDelete.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No products to delete after filtering'
+      });
+    }
+
+    // Delete all products except the one to keep
+    const deleteResult = await Product.deleteMany({ _id: { $in: idsToDelete } });
+
+    res.status(200).json({
+      success: true,
+      message: `${deleteResult.deletedCount} duplicate products deleted successfully`,
+      data: {
+        deletedCount: deleteResult.deletedCount,
+        keptId: keepId
+      }
+    });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err.message
+    });
+  }
+};
