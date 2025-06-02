@@ -18,7 +18,7 @@ const fetchProductsFromMSSQL = async () => {
         ,[PACKTYPE]
         ,[PRODUCTCONFIGURATIONID] as Configuration
         ,[NOB]
-        ,[PRODUCTSEGMENTNAME] as FLAVOURTYPE
+        ,[PRODUCTSEGMENTNAME] as FLAVOURTYPE 
       FROM [BRLY_UAT].[dbo].[Ratan_Item]
     `;
     
@@ -55,7 +55,7 @@ const fetchDistributorsFromMSSQL = async () => {
   }
 };
 
-// Sync product data to MongoDB
+// Sync product data to MongoDB with improved logic
 const syncProductsToMongoDB = async () => {
   try {
     console.log('Product sync process started...');
@@ -64,37 +64,118 @@ const syncProductsToMongoDB = async () => {
     const products = await fetchProductsFromMSSQL();
     
     if (!products || products.length === 0) {
-      console.log('No products found');
-      return;
+      console.log('No products found in MSSQL');
+      return { success: false, message: 'No products found in MSSQL' };
     }
     
     console.log(`${products.length} products fetched from MSSQL`);
     
-    // For each product, update or insert in MongoDB
-    for (const product of products) {
-      // Map MSSQL fields to MongoDB schema if needed
-      const productData = {
-        ITEMID: product.ITEMID,
-        ITEMNAME: product.ITEMNAME,
-        BRANDNAME: product.BRANDNAME,
-        PACKTYPEGROUPNAME: product.PACKTYPEGROUPNAME,
-        Style: product.Style || product.PRODUCTSTYLEID,
-        PACKTYPE: product.PACKTYPE,
-        Configuration: product.Configuration || product.PRODUCTCONFIGURATIONID,
-        NOB: product.NOB,
-        FLAVOURTYPE: product.FLAVOURTYPE || product.PRODUCTSEGMENTNAME
-      };
+    let syncedCount = 0;
+    let updatedCount = 0;
+    let createdCount = 0;
+    let errorCount = 0;
+    
+    // Process products in batches to avoid memory issues
+    const batchSize = 100;
+    for (let i = 0; i < products.length; i += batchSize) {
+      const batch = products.slice(i, i + batchSize);
       
-      await Product.findOneAndUpdate(
-        { ITEMID: product.ITEMID }, // search criteria
-        productData, // update data
-        { upsert: true, new: true } // create new if not found
-      );
+      for (const product of batch) {
+        try {
+          // Skip if ITEMID is null or empty
+          if (!product.ITEMID) {
+            console.warn('Skipping product with empty ITEMID:', product);
+            continue;
+          }
+          
+          // Map MSSQL fields to MongoDB schema
+          const productData = {
+            ITEMID: product.ITEMID?.toString().trim() || null,
+            ITEMNAME: product.ITEMNAME?.toString().trim() || null,
+            BRANDNAME: product.BRANDNAME?.toString().trim() || null,
+            PACKTYPEGROUPNAME: product.PACKTYPEGROUPNAME?.toString().trim() || null,
+            Style: (product.Style || product.PRODUCTSTYLEID)?.toString().trim() || null,
+            PACKTYPE: product.PACKTYPE?.toString().trim() || null,
+            Configuration: (product.Configuration || product.PRODUCTCONFIGURATIONID)?.toString().trim() || null,
+            NOB: product.NOB ? parseInt(product.NOB) : null,
+            FLAVOURTYPE: (product.FLAVOURTYPE || product.PRODUCTSEGMENTNAME)?.toString().trim() || null,
+            updatedAt: new Date()
+          };
+          
+          // Check if product already exists using ITEMID + Style combination
+          const existingProduct = await Product.findOne({ 
+            ITEMID: product.ITEMID,
+            Style: productData.Style,
+            Configuration: productData.Configuration
+          });
+          
+          if (existingProduct) {
+            // Compare fields to check if update is needed
+            let needsUpdate = false;
+            const fieldsToCheck = ['ITEMNAME', 'BRANDNAME', 'PACKTYPEGROUPNAME', 'PACKTYPE', 'NOB', 'FLAVOURTYPE'];
+            
+            for (const field of fieldsToCheck) {
+              if (existingProduct[field] !== productData[field]) {
+                needsUpdate = true;
+                break;
+              }
+            }
+            
+            if (needsUpdate) {
+              await Product.findOneAndUpdate(
+                { ITEMID: product.ITEMID, Style: productData.Style },
+                productData,
+                { new: true }
+              );
+              updatedCount++;
+              console.log(`Updated product: ${product.ITEMID} - ${productData.Style}`);
+            }
+          } else {
+            // Create new product
+            await Product.create(productData);
+            createdCount++;
+            console.log(`Created new product: ${product.ITEMID} - ${productData.Style}`);
+          }
+          
+          syncedCount++;
+          
+        } catch (productError) {
+          console.error(`Error syncing product ${product.ITEMID}:`, productError.message);
+          errorCount++;
+        }
+      }
+      
+      // Log progress for large datasets
+      console.log(`Processed ${Math.min(i + batchSize, products.length)} of ${products.length} products`);
     }
     
-    console.log(`${products.length} products successfully synced to MongoDB`);
+    // Final summary
+    const summary = {
+      totalFetched: products.length,
+      totalSynced: syncedCount,
+      created: createdCount,
+      updated: updatedCount,
+      errors: errorCount
+    };
+    
+    console.log('Product sync completed:', summary);
+    
+    // Verify final count in MongoDB
+    const mongoCount = await Product.countDocuments();
+    console.log(`MongoDB now contains ${mongoCount} products`);
+    
+    return { 
+      success: true, 
+      message: `Product sync completed successfully`, 
+      summary 
+    };
+    
   } catch (error) {
-    console.error('Error syncing products:', error);
+    console.error('Error in product sync process:', error);
+    return { 
+      success: false, 
+      message: `Product sync failed: ${error.message}` 
+    };
   }
 };
 
