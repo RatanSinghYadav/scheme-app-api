@@ -2,6 +2,7 @@ const { connectMSSQL, executeQuery } = require('../config/mssql');
 const Product = require('../models/Product');
 const Distributor = require('../models/Distributor');
 const schedule = require('node-schedule');
+const CombinedScheme = require('../models/CombinedScheme');
 
 // Fetch products from MSSQL
 const fetchProductsFromMSSQL = async () => {
@@ -218,7 +219,155 @@ const syncDistributorsToMongoDB = async () => {
   }
 };
 
-// Main function to sync all data
+// Fetch schemes from MSSQL
+const fetchSchemesFromMSSQL = async () => {
+  try {
+    const connection = await connectMSSQL();
+    
+    // Query to fetch scheme data from MSSQL
+    const query = `
+      SELECT 
+        SchemeCode,
+        StartDate,
+        EndDate,
+        SalesType,
+        SalesCode,
+        SalesDescription,
+        ItemType as type,
+        ItemCode as code,
+        ItemName as itemName,
+        ConfigId as configId,
+        SchemeCalculationType,
+        LineDiscount as lineDiscount
+      FROM [BRLY_UAT].[dbo].[Ratan_Schemes]
+    `;
+    
+    const result = await executeQuery(connection, query);
+    connection.close();
+    return result;
+  } catch (error) {
+    console.error('Error fetching schemes:', error);
+    throw error;
+  }
+};
+
+// Sync schemes to CombinedSchemes collection
+const syncSchemesToCombinedSchemes = async () => {
+  try {
+    console.log('Schemes sync process started...');
+    
+    // Fetch schemes from MSSQL
+    const schemes = await fetchSchemesFromMSSQL();
+    
+    if (!schemes || schemes.length === 0) {
+      console.log('No schemes found in MSSQL');
+      
+      // For testing, you can add some sample data here
+      console.log('Adding sample scheme data for testing...');
+      
+      // Get all distributors
+      const distributors = await Distributor.find();
+      
+      // Get all products
+      const products = await Product.find();
+      
+      if (distributors.length > 0 && products.length > 0) {
+        // Create sample schemes for each distributor and multiple products
+        const sampleSchemes = [];
+        
+        for (const distributor of distributors.slice(0, 5)) { // Limit to first 5 distributors
+          for (const product of products.slice(0, 10)) { // Use first 10 products
+            sampleSchemes.push({
+              schemeCode: `SCH${Math.floor(Math.random() * 1000000)}`,
+              startDate: new Date('2023-01-01'),
+              endDate: new Date('2025-12-31'),
+              salesType: 'Customer',
+              salesCode: distributor.CUSTOMERACCOUNT,
+              salesDescription: distributor.ORGANIZATIONNAME,
+              type: 'Product',
+              code: product.ITEMID,
+              itemName: product.ITEMNAME,
+              configId: product.Configuration,
+              schemeCalculationType: Math.random() > 0.5 ? 'Percentage' : 'Fixed Amount',
+              lineDiscount: Math.floor(Math.random() * 20) + 1 // Random discount between 1 and 20
+            });
+          }
+          
+          // Also add some group schemes
+          sampleSchemes.push({
+            schemeCode: `GRPSCH${Math.floor(Math.random() * 1000000)}`,
+            startDate: new Date('2023-01-01'),
+            endDate: new Date('2025-12-31'),
+            salesType: 'Group',
+            salesCode: distributor.CUSTOMERGROUPID,
+            salesDescription: `Group ${distributor.CUSTOMERGROUPID}`,
+            type: 'Product',
+            code: products[0].ITEMID,
+            itemName: products[0].ITEMNAME,
+            configId: products[0].Configuration,
+            schemeCalculationType: 'Percentage',
+            lineDiscount: 10
+          });
+        }
+        
+        // Clear existing schemes
+        await CombinedScheme.deleteMany({});
+        
+        // Insert sample schemes
+        await CombinedScheme.insertMany(sampleSchemes);
+        
+        console.log(`Added ${sampleSchemes.length} sample schemes for testing`);
+        return { success: true, message: 'Sample schemes added for testing' };
+      }
+      
+      return { success: false, message: 'No schemes found in MSSQL and no distributors/products for sample data' };
+    }
+    
+    console.log(`${schemes.length} schemes fetched from MSSQL`);
+    
+    // Clear existing schemes
+    await CombinedScheme.deleteMany({});
+    
+    // Process schemes in batches
+    const batchSize = 100;
+    for (let i = 0; i < schemes.length; i += batchSize) {
+      const batch = schemes.slice(i, i + batchSize);
+      
+      const schemeData = batch.map(scheme => ({
+        schemeCode: scheme.SchemeCode,
+        startDate: new Date(scheme.StartDate),
+        endDate: new Date(scheme.EndDate),
+        salesType: scheme.SalesType,
+        salesCode: scheme.SalesCode,
+        salesDescription: scheme.SalesDescription,
+        type: scheme.type,
+        code: scheme.code,
+        itemName: scheme.itemName,
+        configId: scheme.configId,
+        schemeCalculationType: scheme.SchemeCalculationType,
+        lineDiscount: parseFloat(scheme.lineDiscount) || 0
+      }));
+      
+      await CombinedScheme.insertMany(schemeData);
+      
+      console.log(`Processed ${Math.min(i + batchSize, schemes.length)} of ${schemes.length} schemes`);
+    }
+    
+    console.log('Schemes sync completed successfully');
+    
+    // Verify final count in MongoDB
+    const mongoCount = await CombinedScheme.countDocuments();
+    console.log(`MongoDB now contains ${mongoCount} schemes`);
+    
+    return { success: true, message: 'Schemes sync completed successfully' };
+    
+  } catch (error) {
+    console.error('Error in schemes sync process:', error);
+    return { success: false, message: `Schemes sync failed: ${error.message}` };
+  }
+};
+
+// Update the syncAllData function to include schemes sync
 const syncAllData = async () => {
   try {
     console.log('Data sync process started: ' + new Date().toISOString());
@@ -226,6 +375,7 @@ const syncAllData = async () => {
     // Sync products and distributors
     await syncProductsToMongoDB();
     await syncDistributorsToMongoDB();
+    await syncSchemesToCombinedSchemes();
     
     console.log('Data sync process completed: ' + new Date().toISOString());
   } catch (error) {
@@ -251,5 +401,6 @@ module.exports = {
   syncAllData,
   setupScheduler,
   syncProductsToMongoDB,
-  syncDistributorsToMongoDB
-};
+  syncDistributorsToMongoDB,
+  syncSchemesToCombinedSchemes
+}; 
